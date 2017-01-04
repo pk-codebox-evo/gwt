@@ -22,6 +22,9 @@ import com.google.gwt.dev.jjs.ast.JPrimitiveType;
 import com.google.gwt.dev.jjs.ast.JProgram;
 import com.google.gwt.dev.jjs.ast.JReferenceType;
 import com.google.gwt.dev.jjs.ast.JType;
+import com.google.gwt.thirdparty.guava.common.collect.ImmutableMap;
+
+import java.util.Map;
 
 /**
  * TypeCategory classifies Java types into different categories. <p>
@@ -132,6 +135,15 @@ public enum TypeCategory {
     return TypeCategory.TYPE_JAVA_OBJECT;
   }
 
+  private static Map<String, TypeCategory> specialGlobalNames =
+      ImmutableMap.<String,TypeCategory>builder()
+          .put("Object", TYPE_JS_OBJECT)
+          .put("Function", TYPE_JS_FUNCTION)
+          .put("Array", TYPE_JS_ARRAY)
+          .put("Number", TYPE_JAVA_LANG_DOUBLE)
+          .put("String", TYPE_JAVA_LANG_STRING)
+          .build();
+
   private static TypeCategory getJsSpecialType(JType type) {
     if (!(type instanceof JClassType) || !type.isJsNative()) {
       return null;
@@ -142,19 +154,7 @@ public enum TypeCategory {
       return null;
     }
 
-    switch (classType.getJsName()) {
-      case "Object":
-        return TypeCategory.TYPE_JS_OBJECT;
-      case "Function":
-        return TypeCategory.TYPE_JS_FUNCTION;
-      case "Array":
-        return TypeCategory.TYPE_JS_ARRAY;
-      case "Number":
-        return TypeCategory.TYPE_JAVA_LANG_DOUBLE;
-      case "String":
-        return TypeCategory.TYPE_JAVA_LANG_STRING;
-    }
-    return null;
+    return specialGlobalNames.get(classType.getJsName());
   }
 
   private static boolean isJsoArray(JType type) {

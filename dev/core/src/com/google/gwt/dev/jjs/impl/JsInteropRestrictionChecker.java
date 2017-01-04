@@ -1,11 +1,11 @@
 /*
  * Copyright 2015 Google Inc.
- * 
+ *
  * Licensed under the Apache License, Version 2.0 (the "License"); you may not use this file except
  * in compliance with the License. You may obtain a copy of the License at
- * 
+ *
  * http://www.apache.org/licenses/LICENSE-2.0
- * 
+ *
  * Unless required by applicable law or agreed to in writing, software distributed under the License
  * is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express
  * or implied. See the License for the specific language governing permissions and limitations under
@@ -18,6 +18,7 @@ import com.google.gwt.core.ext.UnableToCompleteException;
 import com.google.gwt.dev.MinimalRebuildCache;
 import com.google.gwt.dev.javac.JsInteropUtil;
 import com.google.gwt.dev.jjs.HasSourceInfo;
+import com.google.gwt.dev.jjs.ast.CanBeJsNative;
 import com.google.gwt.dev.jjs.ast.CanHaveSuppressedWarnings;
 import com.google.gwt.dev.jjs.ast.Context;
 import com.google.gwt.dev.jjs.ast.HasJsInfo.JsMemberType;
@@ -284,7 +285,7 @@ public class JsInteropRestrictionChecker extends AbstractRestrictionChecker {
   }
 
   private void checkJsOverlay(JMember member) {
-    if (member.getEnclosingType().isJsoType()) {
+    if (member.getEnclosingType().isJsoType() || member.isSynthetic()) {
       return;
     }
 
@@ -412,7 +413,10 @@ public class JsInteropRestrictionChecker extends AbstractRestrictionChecker {
         break;
       case PROPERTY:
         JField field = (JField) member;
-        if (field.hasInitializer()) {
+        if (field.isFinal()) {
+          logError(member, "Native JsType field %s cannot be final.",
+              getMemberDescription(member));
+        } else if (field.hasInitializer()) {
           logError(member, "Native JsType field %s cannot have initializer.",
               getMemberDescription(member));
         }
@@ -439,6 +443,10 @@ public class JsInteropRestrictionChecker extends AbstractRestrictionChecker {
   }
 
   private void checkMethodParameters(JMethod method) {
+    if (method.isSynthetic()) {
+      return;
+    }
+
     boolean hasOptionalParameters = false;
     for (JParameter parameter : method.getParams()) {
       if (parameter.isOptional()) {
@@ -563,19 +571,28 @@ public class JsInteropRestrictionChecker extends AbstractRestrictionChecker {
     checkJsNamespace(member);
   }
 
-  private <T extends HasJsName & HasSourceInfo> void checkJsName(T item) {
+  private <T extends HasJsName & HasSourceInfo & CanBeJsNative> void checkJsName(T item) {
     if (item.getJsName().isEmpty()) {
       logError(item, "%s cannot have an empty name.", getDescription(item));
-    } else if (!JsUtils.isValidJsIdentifier(item.getJsName())) {
+    } else if ((item.isJsNative() && !JsUtils.isValidJsQualifiedName(item.getJsName()))
+        || (!item.isJsNative() && !JsUtils.isValidJsIdentifier(item.getJsName()))) {
+      // Allow qualified names in the name field for JsPackage.GLOBAL native items for future
+      // compatibility
       logError(item, "%s has invalid name '%s'.", getDescription(item), item.getJsName());
     }
   }
 
-  private <T extends HasJsName & HasSourceInfo> void checkJsNamespace(T item) {
+  private <T extends HasJsName & HasSourceInfo & CanBeJsNative> void checkJsNamespace(T item) {
     if (JsInteropUtil.isGlobal(item.getJsNamespace())) {
       return;
     }
-    if (item.getJsNamespace().isEmpty()) {
+    if (JsInteropUtil.isWindow(item.getJsNamespace())) {
+      if (item.isJsNative()) {
+        return;
+      }
+      logError(item, "'%s' can only be used as a namespace of native types and members.",
+          item.getJsNamespace());
+    } else if (item.getJsNamespace().isEmpty()) {
       logError(item, "%s cannot have an empty namespace.", getDescription(item));
     } else if (!JsUtils.isValidJsQualifiedName(item.getJsNamespace())) {
       logError(item, "%s has invalid namespace '%s'.", getDescription(item), item.getJsNamespace());

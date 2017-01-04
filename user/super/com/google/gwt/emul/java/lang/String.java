@@ -157,12 +157,12 @@ public final class String implements Comparable<String>, CharSequence,
   }
 
   @JsType(isNative = true, name = "Function", namespace = JsPackage.GLOBAL)
-  private static class NativeFunction<T> {
-    public native T apply(Object thisContext, Object[] argsArray);
+  private static class NativeFunction {
+    public native String apply(String thisContext, Object[] argsArray);
   }
 
-  @JsProperty(name = "fromCharCode", namespace = "String")
-  private static native NativeFunction<String> getFromCharCodeFunction();
+  @JsProperty(name = "String.fromCharCode", namespace = "<window>")
+  private static native NativeFunction getFromCharCodeFunction();
 
   public static String valueOf(char[] x) {
     return valueOf(x, 0, x.length);
@@ -489,11 +489,11 @@ public final class String implements Comparable<String>, CharSequence,
   public int lastIndexOf(String str) {
     return asNativeString().lastIndexOf(str);
   }
-  
+
   public int lastIndexOf(String str, int start) {
     return asNativeString().lastIndexOf(str, start);
   }
-  
+
   @Override
   public int length() {
     return asNativeString().length;
@@ -683,7 +683,7 @@ public final class String implements Comparable<String>, CharSequence,
   }
 
   public String substring(int beginIndex) {
-    return asNativeString().substr(beginIndex, length() - beginIndex);
+    return asNativeString().substr(beginIndex);
   }
 
   public String substring(int beginIndex, int endIndex) {
@@ -724,7 +724,7 @@ public final class String implements Comparable<String>, CharSequence,
   public String toUpperCase() {
     return asNativeString().toLocaleUpperCase();
   }
-  
+
   // See the notes in lowerCase pair.
   public String toUpperCase(Locale locale) {
     return locale == Locale.getDefault()
@@ -753,7 +753,7 @@ public final class String implements Comparable<String>, CharSequence,
     return start > 0 || end < length ? substring(start, end) : this;
   }
 
-  @JsType(isNative = true, name = "String", namespace = JsPackage.GLOBAL)
+  @JsType(isNative = true, name = "String", namespace = "<window>")
   private static class NativeString {
     public static native String fromCharCode(char x);
     public int length;
@@ -763,6 +763,7 @@ public final class String implements Comparable<String>, CharSequence,
     public native int lastIndexOf(String str);
     public native int lastIndexOf(String str, int start);
     public native String replace(NativeRegExp regex, String replace);
+    public native String substr(int beginIndex);
     public native String substr(int beginIndex, int len);
     public native String toLocaleLowerCase();
     public native String toLocaleUpperCase();

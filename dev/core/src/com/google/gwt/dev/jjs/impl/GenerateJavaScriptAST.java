@@ -25,6 +25,7 @@ import com.google.gwt.dev.MinimalRebuildCache;
 import com.google.gwt.dev.PrecompileTaskOptions;
 import com.google.gwt.dev.cfg.PermutationProperties;
 import com.google.gwt.dev.common.InliningMode;
+import com.google.gwt.dev.javac.JsInteropUtil;
 import com.google.gwt.dev.jjs.HasSourceInfo;
 import com.google.gwt.dev.jjs.InternalCompilerException;
 import com.google.gwt.dev.jjs.SourceInfo;
@@ -91,6 +92,7 @@ import com.google.gwt.dev.jjs.ast.JTransformer;
 import com.google.gwt.dev.jjs.ast.JTryStatement;
 import com.google.gwt.dev.jjs.ast.JType;
 import com.google.gwt.dev.jjs.ast.JUnaryOperator;
+import com.google.gwt.dev.jjs.ast.JUnsafeTypeCoercion;
 import com.google.gwt.dev.jjs.ast.JVariable;
 import com.google.gwt.dev.jjs.ast.JVisitor;
 import com.google.gwt.dev.jjs.ast.JWhileStatement;
@@ -527,7 +529,6 @@ public class GenerateJavaScriptAST {
     private final JsName arrayLength = objectScope.declareUnobfuscatableName("length");
     private final JsName globalTemp = topScope.declareUnobfuscatableName("_");
     private final JsName prototype = objectScope.declareUnobfuscatableName("prototype");
-    private final JsName call = objectScope.declareUnobfuscatableName("call");
 
     @Override
     public JsExpression transformArrayLength(JArrayLength expression) {
@@ -623,6 +624,8 @@ public class GenerateJavaScriptAST {
       if (type.isJsNative()) {
         // Emit JsOverlay static methods for native JsTypes.
         emitStaticMethods(type);
+        // Emit JsOverlay (static) fields for native JsTypes.
+        emitFields(type);
         return null;
       }
 
@@ -898,7 +901,7 @@ public class GenerateJavaScriptAST {
       JsNameRef methodNameRef;
       if (method.isJsNative()) {
         // Construct Constructor.prototype.jsname or Constructor.
-        methodNameRef = createJsQualifier(method.getQualifiedJsName(), sourceInfo);
+        methodNameRef = createGlobalQualifier(method.getQualifiedJsName(), sourceInfo);
       } else if (method.isConstructor()) {
         /*
          * Constructor calls through {@code this} and {@code super} are always dispatched statically
@@ -980,7 +983,7 @@ public class GenerateJavaScriptAST {
       JConstructor ctor = newInstance.getTarget();
       JsName ctorName = names.get(ctor);
       JsNameRef  reference = ctor.isJsNative()
-          ? createJsQualifier(ctor.getQualifiedJsName(), sourceInfo)
+          ? createGlobalQualifier(ctor.getQualifiedJsName(), sourceInfo)
           : ctorName.makeRef(sourceInfo);
       List<JsExpression> arguments = transform(newInstance.getArgs());
 
@@ -1105,7 +1108,7 @@ public class GenerateJavaScriptAST {
       JMethod method = jsniMethodRef.getTarget();
       if (method.isJsNative()) {
         // Construct Constructor.prototype.jsname or Constructor.
-        return createJsQualifier(method.getQualifiedJsName(), jsniMethodRef.getSourceInfo());
+        return createGlobalQualifier(method.getQualifiedJsName(), jsniMethodRef.getSourceInfo());
       }
       return names.get(method).makeRef(jsniMethodRef.getSourceInfo());
     }
@@ -1148,6 +1151,11 @@ public class GenerateJavaScriptAST {
       }
 
       return jsTry;
+    }
+
+    @Override
+    public JsNode transformUnsafeTypeCoercion(JUnsafeTypeCoercion unsafeTypeCoercion) {
+      return transform(unsafeTypeCoercion.getExpression());
     }
 
     @Override
@@ -1688,7 +1696,7 @@ public class GenerateJavaScriptAST {
     }
 
     private JsExpression buildClosureStyleCastMapFromArrayLiteral(
-            List<JsExpression> runtimeTypeIdLiterals, SourceInfo sourceInfo) {
+        List<JsExpression> runtimeTypeIdLiterals, SourceInfo sourceInfo) {
       /*
        * goog.object.createSet('foo', 'bar', 'baz') is optimized by closure compiler into
        * {'foo': !0, 'bar': !0, baz: !0}
@@ -1720,13 +1728,17 @@ public class GenerateJavaScriptAST {
     private JsNameRef createStaticReference(JMember member, SourceInfo sourceInfo) {
       assert member.isStatic();
       return member.isJsNative()
-          ? createJsQualifier(member.getQualifiedJsName(), sourceInfo)
+          ? createGlobalQualifier(member.getQualifiedJsName(), sourceInfo)
           : names.get(member).makeRef(sourceInfo);
     }
 
     private void emitFields(JDeclaredType type) {
       JsVars vars = new JsVars(type.getSourceInfo());
       for (JField field : type.getFields()) {
+        if (field.isJsNative()) {
+          // Nothing to output for native fields.
+          continue;
+        }
         JsExpression initializer = null;
         // if we need an initial value, create an assignment
         if (initializeAtTopScope(field)) {
@@ -1997,7 +2009,7 @@ public class GenerateJavaScriptAST {
 
       defineClassArguments.add(transform(getRuntimeTypeReference(type)));
       defineClassArguments.add(jsPrototype == null ? transform(superTypeId) :
-          createJsQualifier(jsPrototype, type.getSourceInfo()));
+          createGlobalQualifier(jsPrototype, type.getSourceInfo()));
       defineClassArguments.add(generateCastableTypeMap(type));
       defineClassArguments.addAll(constructorArgs);
 
@@ -2006,21 +2018,22 @@ public class GenerateJavaScriptAST {
           RuntimeConstants.RUNTIME_DEFINE_CLASS, defineClassArguments).makeStmt();
       addTypeDefinitionStatement(type, defineClassStatement);
 
-      maybeCopyObjProperties(
+      maybeCopyJavaLangObjectProperties(
           type,
           getPrototypeQualifierViaLookup(program.getTypeJavaLangObject(), type.getSourceInfo()),
           globalTemp.makeRef(type.getSourceInfo()));
     }
 
-    private void maybeCopyObjProperties(
-        JDeclaredType type, JsExpression toPrototype, JsExpression fromPrototype) {
+    private void maybeCopyJavaLangObjectProperties(
+        JDeclaredType type, JsExpression javaLangObjectPrototype, JsExpression toPrototype) {
       if (getSuperPrototype(type) != null && !type.isJsFunctionImplementation()) {
         JsStatement statement =
-        constructInvocation(type.getSourceInfo(),
-            RuntimeConstants.RUNTIME_COPY_OBJECT_PROPERTIES,
-            fromPrototype,
-            toPrototype)
-            .makeStmt();
+            constructInvocation(
+                type.getSourceInfo(),
+                RuntimeConstants.RUNTIME_COPY_OBJECT_PROPERTIES,
+                javaLangObjectPrototype,
+                toPrototype
+            ).makeStmt();
         addTypeDefinitionStatement(type, statement);
       }
     }
@@ -2037,7 +2050,7 @@ public class GenerateJavaScriptAST {
     }
 
     private void generateClassDefinition(JDeclaredType type) {
-        assert !program.isRepresentedAsNativeJsPrimitive(type);
+      assert !program.isRepresentedAsNativeJsPrimitive(type);
 
       if (closureCompilerFormatEnabled) {
         generateClosureTypeDefinition(type);
@@ -2128,7 +2141,7 @@ public class GenerateJavaScriptAST {
       String jsPrototype = getSuperPrototype(type);
       SourceInfo info = type.getSourceInfo();
       JsNameRef parentCtor = jsPrototype != null ?
-          createJsQualifier(jsPrototype, info) :
+          createGlobalQualifier(jsPrototype, info) :
             superClass != null ?
               names.get(superClass).makeRef(info) :
               null;
@@ -2147,7 +2160,7 @@ public class GenerateJavaScriptAST {
 
       // inline assignment of castableTypeMap field instead of using defineClass()
       setupCastMapOnPrototype(type);
-      maybeCopyObjProperties(
+      maybeCopyJavaLangObjectProperties(
           type,
           getPrototypeQualifierOf(program.getTypeJavaLangObject(), info),
           getPrototypeQualifierOf(type, info));
@@ -2242,10 +2255,10 @@ public class GenerateJavaScriptAST {
       generatePrototypeAssignment(method, name, rhs, method.getJsMemberType());
     }
 
-     /**
-      * Create a vtable assignment of the form _.polyname = rhs; and register the line as
-      * created for {@code method}.
-      */
+    /**
+     * Create a vtable assignment of the form _.polyname = rhs; and register the line as
+     * created for {@code method}.
+     */
     private void generatePrototypeAssignment(JMethod method, JsName name, JsExpression rhs,
         JsMemberType memberType) {
       SourceInfo sourceInfo = method.getSourceInfo();
@@ -2275,9 +2288,9 @@ public class GenerateJavaScriptAST {
 
       JsObjectLiteral definePropertyLiteral =
           JsObjectLiteral.builder(sourceInfo)
-               // {name: {get: function() { ..... }} or {set : function (v) {....}}}
+              // {name: {get: function() { ..... }} or {set : function (v) {....}}}
               .add(name, JsObjectLiteral.builder(sourceInfo)
-                      // {get: function() { ..... }} or {set : function (v) {....}}
+                  // {get: function() { ..... }} or {set : function (v) {....}}
                   .add(method.getJsMemberType().getPropertyAccessorKey(), methodDefinitionStatement)
                   .build())
               .build();
@@ -2335,7 +2348,7 @@ public class GenerateJavaScriptAST {
      * variable _ points the JavaScript prototype for {@code type}.
      */
     private void generatePrototypeDefinitions(JDeclaredType type) {
-        assert !program.isRepresentedAsNativeJsPrimitive(type);
+      assert !program.isRepresentedAsNativeJsPrimitive(type);
 
       // Emit synthetic methods first. In JsInterop we allow a more user written method to be named
       // with the same name as a synthetic bridge (required due to generics) relying that the
@@ -2390,11 +2403,6 @@ public class GenerateJavaScriptAST {
         // both names have to point to the same function.
         generatePrototypeDefinitionAlias(method, getPackagePrivateName(method));
       }
-    }
-
-    public JsNameRef createJsQualifier(String qualifier, SourceInfo sourceInfo) {
-      assert !qualifier.isEmpty();
-      return JsUtils.createQualifiedNameRef("$wnd." + qualifier, sourceInfo);
     }
 
     /**
@@ -3074,5 +3082,9 @@ public class GenerateJavaScriptAST {
 
   private JsName getIndexedFieldJsName(String indexedName) {
     return names.get(program.getIndexedField(indexedName));
+  }
+
+  private static JsNameRef createGlobalQualifier(String qualifier, SourceInfo sourceInfo) {
+     return JsUtils.createQualifiedNameRef(JsInteropUtil.normalizeQualifier(qualifier), sourceInfo);
   }
 }

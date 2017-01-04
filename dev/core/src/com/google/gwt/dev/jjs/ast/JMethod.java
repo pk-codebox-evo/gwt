@@ -172,9 +172,9 @@ public class JMethod extends JNode implements JMember, CanBeAbstract {
     if (actualJsName.isEmpty()) {
       assert !needsDynamicDispatch();
       return namespace;
-    } else if (JsInteropUtil.isGlobal(namespace)) {
+    } else if (JsInteropUtil.isGlobal(namespace) || JsInteropUtil.isWindow(namespace)) {
       assert !needsDynamicDispatch();
-      return actualJsName;
+      return namespace + "." + actualJsName;
     } else {
       return namespace + (isStatic() ? "." : ".prototype.") + actualJsName;
     }
@@ -199,7 +199,7 @@ public class JMethod extends JNode implements JMember, CanBeAbstract {
    * an existing non-JsMember inside a class.
    */
   public boolean exposesNonJsMember() {
-    if (isInterfaceMethod() || !JjsUtils.exposesJsName(this)) {
+    if (isInterfaceMethod() || enclosingType.isJsNative() || !JjsUtils.exposesJsName(this)) {
       return false;
     }
 
@@ -292,8 +292,8 @@ public class JMethod extends JNode implements JMember, CanBeAbstract {
     this.hasSideEffects = hasSideEffects;
   }
 
-  public void setDefaultMethod() {
-    this.defaultMethod = true;
+  public void setDefaultMethod(boolean defaultMethod) {
+    this.defaultMethod = defaultMethod;
   }
 
   @Override
@@ -644,6 +644,7 @@ public class JMethod extends JNode implements JMember, CanBeAbstract {
     return access == AccessModifier.DEFAULT.ordinal();
   }
 
+  @Override
   public boolean isExternal() {
     return getEnclosingType().isExternal();
   }

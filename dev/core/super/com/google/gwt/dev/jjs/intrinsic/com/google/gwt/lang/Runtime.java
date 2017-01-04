@@ -97,8 +97,7 @@ public class Runtime {
     return @Runtime::portableObjCreate(*)(superPrototype);
   }-*/;
 
-  public static native void copyObjectProperties(JavaScriptObject from,
-      JavaScriptObject to) /*-{
+  public static native void copyObjectProperties(JavaScriptObject from, JavaScriptObject to) /*-{
     for (var property in from) {
       if (to[property] === undefined) {
         to[property] = from[property];
@@ -212,5 +211,12 @@ public class Runtime {
       propertyDefinition[key]['configurable'] = true;
     }
     Object.defineProperties(proto,  propertyDefinition);
+  }-*/;
+
+  public static native String toString(Object object) /*-{
+    if (Array.isArray(object) && @Util::hasTypeMarker(*)(object)) {
+       return @Object::toString(Ljava/lang/Object;)(object);
+    }
+    return object.toString();
   }-*/;
 }
